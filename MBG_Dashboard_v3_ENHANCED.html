@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MBG Monitoring Dashboard v3 - Professional Enterprise Edition</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/google-sheets-api@1.0.0/dist/google-sheets-api.min.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@18.2.0",
+      "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+      "lucide-react": "https://esm.sh/lucide-react@0.292.0"
+    }
+  }
+  </script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    ::-webkit-scrollbar{width:5px;height:5px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#334155;border-radius:10px}
+    ::-webkit-scrollbar-thumb:hover{background:#475569}
+    body{margin:0;padding:0;overflow:hidden}
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+    .fade-in{animation:fadeInUp .25s ease-out both}
+    @keyframes pulse-glow{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,0)}50%{box-shadow:0 0 12px 2px rgba(16,185,129,0.25)}}
+    .pulse-badge{animation:pulse-glow 2s infinite}
+    
+    /* Glass Morphism & Neo Futuristic Styling */
+    .glass-panel{background:rgba(15,23,42,0.7);backdrop-filter:blur(10px);border:1px solid rgba(100,200,255,0.1)}
+    .glass-panel:hover{background:rgba(15,23,42,0.85);border-color:rgba(100,200,255,0.2)}
+    .neon-border{border:2px solid rgba(0,255,255,0.3);box-shadow:0 0 10px rgba(0,255,255,0.1)}
+    .neon-glow{text-shadow:0 0 10px rgba(0,255,255,0.5)}
+    .cyber-bg{background:linear-gradient(135deg,#0f1729 0%,#1a2f4d 50%,#0f1729 100%)}
+    .holographic-gradient{background:linear-gradient(135deg,rgba(0,255,255,0.1),rgba(100,200,255,0.1))}
+    
+    /* Advanced Animations */
+    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+    .float-animation{animation:float 3s ease-in-out infinite}
+    @keyframes shimmer{0%{background-position:0 0}100%{background-position:1000px 0}}
+    .shimmer-loading{animation:shimmer 2s infinite;background-size:1000px 100%}
+    @keyframes dataFlow{0%{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+    .data-flow{animation:dataFlow 0.5s ease-out}
+    
+    /* Chart Container Styling */
+    .chart-container{position:relative;height:300px;margin-top:20px}
+    .chart-legend{display:flex;gap:15px;flex-wrap:wrap;margin-top:15px;font-size:12px}
+    
+    /* Status Indicators */
+    .status-indicator{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+    .status-online{background-color:#10b981;box-shadow:0 0 10px rgba(16,185,129,0.6)}
+    .status-warning{background-color:#f59e0b;box-shadow:0 0 10px rgba(245,158,11,0.6)}
+    .status-error{background-color:#ef4444;box-shadow:0 0 10px rgba(239,68,68,0.6)}
+    
+    /* Tooltip Styling */
+    .tooltip-glass{background:rgba(15,23,42,0.95);backdrop-filter:blur(10px);border:1px solid rgba(100,200,255,0.2);border-radius:8px;padding:12px;color:#e2e8f0;font-size:12px;box-shadow:0 8px 32px rgba(0,255,255,0.1)}
+    
+    /* Input & Form Styling */
+    .input-neon{background:rgba(15,23,42,0.6);border:1px solid rgba(100,200,255,0.3);color:#e2e8f0;padding:10px 12px;border-radius:6px;transition:all 0.3s}
+    .input-neon:focus{outline:none;border-color:rgba(0,255,255,0.6);box-shadow:0 0 10px rgba(0,255,255,0.2)}
+    
+    /* Loading State */
+    .loading-pulse{background:linear-gradient(90deg,rgba(100,200,255,0.1),rgba(0,255,255,0.1),rgba(100,200,255,0.1));background-size:200% 100%;animation:shimmer 2s infinite}
+  </style>
+</head>
+<body class="antialiased bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+<div id="root"></div>
+
+<script type="text/babel" data-type="module">
+import React, { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
+import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
+import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'https://esm.sh/recharts@2.10.0';
+import { Menu, X, TrendingUp, BarChart3, Users, Settings, Database, AlertCircle, CheckCircle, Clock, ArrowUp, ArrowDown, Download, Upload, Filter, Eye, Edit, Trash2, Plus, Save, ChevronDown, Info, Zap, Target, Trophy, DollarSign, Activity, Calendar } from 'https://esm.sh/lucide-react@0.292.0';
+
+// ======================== DATABASE & DATA MANAGEMENT ========================
+const DATABASE_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1eih0c1uTMZEY4bH5V0r-qnQjD2Y48M66L4QBWRi8Hxs/edit?usp=sharing';
+
+const mockDatabaseStructure = {
+  'Revenue': [
+    { date: '2026-01-15', amount: 425000000, doctor: 'dr. Farah Salsabila', category: 'Consultation' },
+    { date: '2026-02-20', amount: 450000000, doctor: 'dr. Amelia Putri', category: 'Treatment' },
+    { date: '2026-03-18', amount: 425000000, doctor: 'dr. Devi Anggraini', category: 'Surgery' },
+  ],
+  'Doctor Target': [
+    { name: 'dr. Farah Salsabila', target: 75000000, achieved: 71000000, month: 'Jul 2026' },
+    { name: 'dr. Amelia Putri', target: 70000000, achieved: 69000000, month: 'Jul 2026' },
+    { name: 'dr. Devi Anggraini', target: 65000000, achieved: 60000000, month: 'Jul 2026' },
+  ],
+  'Employee Target': [
+    { name: 'Ahmad Suryanto', role: 'Sales', target: 50, achieved: 48, month: 'Jul 2026' },
+    { name: 'Siti Nurhaliza', role: 'Admin', target: 100, achieved: 95, month: 'Jul 2026' },
+  ],
+  'Inventory': [
+    { item: 'Medical Supplies', quantity: 500, threshold: 100, status: 'Good' },
+    { item: 'Equipment', quantity: 45, threshold: 10, status: 'Good' },
+  ]
+};
+
+const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const currentDate = new Date();
+const currentMonth = currentDate.getMonth();
+const currentYear = currentDate.getFullYear();
+
+// ======================== AI INSIGHT COMPONENT ========================
+const AIInsightPanel = ({ currentMonth, currentYear, revenue, target }) => {
+  const achievement = ((revenue / target) * 100).toFixed(1);
+  const trend = revenue > target ? 'positive' : 'warning';
+  
+  const aiInsights = {
+    positive: [
+      `Performa penjualan bulan ${monthNames[currentMonth]} 2026 mencapai ${achievement}% dari target. Pertahankan momentum ini! 🚀`,
+      `Revenue mencapai Rp ${(revenue/1000000).toFixed(0)}M dengan proyeksi pertumbuhan positif. Fokus pada retensi pelanggan.`,
+      `Target tercapai dengan sempurna! Rekomendasi: Ekspansi ke segmen pasar baru untuk kuartal berikutnya.`
+    ],
+    warning: [
+      `Pencapaian ${achievement}% - Urgent action needed! 🔔 Tingkatkan effort penjualan di minggu terakhir bulan.`,
+      `Gap Rp ${(target - revenue).toLocaleString('id-ID')} masih harus dipenuhi. Fokus pada high-value clients.`,
+      `Tren menurun terdeteksi. Analisis kembali strategi pricing dan promosi untuk recovery yang cepat.`
+    ]
+  };
+
+  const selectedInsight = aiInsights[trend][Math.floor(Math.random() * aiInsights[trend].length)];
+  const suggestions = trend === 'positive' 
+    ? ['Tingkatkan volume penjualan', 'Kembangkan product bundle', 'Target market expansion']
+    : ['Aggressive sales campaign', 'Client retention program', 'Discount strategy review'];
+
+  return (
+    <div className="glass-panel neon-border rounded-lg p-4 mb-4 border-l-4 border-l-cyan-400">
+      <div className="flex items-start gap-3">
+        <div className="flex-shrink-0">
+          <Zap className="w-5 h-5 text-cyan-400 float-animation" />
+        </div>
+        <div className="flex-1">
+          <h3 className="text-cyan-400 font-semibold text-sm mb-2">AI Insight — {monthNames[currentMonth]} 2026</h3>
+          <p className="text-slate-300 text-sm mb-3">{selectedInsight}</p>
+          <div className="flex gap-2 flex-wrap">
+            {suggestions.map((sugg, i) => (
+              <span key={i} className="text-xs bg-cyan-500/10 text-cyan-300 px-2 py-1 rounded border border-cyan-400/30">
+                {sugg}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ======================== MONTH YEAR FILTER ========================
+const MonthYearFilter = ({ onFilterChange, defaultMonth, defaultYear }) => {
+  const [selectedMonth, setSelectedMonth] = useState(defaultMonth);
+  const [selectedYear, setSelectedYear] = useState(defaultYear);
+
+  const handleChange = (type, value) => {
+    if (type === 'month') {
+      setSelectedMonth(parseInt(value));
+      onFilterChange(parseInt(value), selectedYear);
+    } else {
+      setSelectedYear(parseInt(value));
+      onFilterChange(selectedMonth, parseInt(value));
+    }
+  };
+
+  return (
+    <div className="flex gap-2 mb-4">
+      <div className="flex items-center gap-2">
+        <Calendar className="w-4 h-4 text-cyan-400" />
+        <select 
+          value={selectedMonth}
+          onChange={(e) => handleChange('month', e.target.value)}
+          className="input-neon text-sm"
+        >
+          {monthNames.map((month, idx) => (
+            <option key={idx} value={idx}>{month}</option>
+          ))}
+        </select>
+      </div>
+      <select 
+        value={selectedYear}
+        onChange={(e) => handleChange('year', e.target.value)}
+        className="input-neon text-sm"
+      >
+        {[2024, 2025, 2026, 2027].map(year => (
+          <option key={year} value={year}>{year}</option>
+        ))}
+      </select>
+    </div>
+  );
+};
+
+// ======================== DATA PREVIEW & VALIDATION ========================
+const DataPreviewModal = ({ isOpen, data, onConfirm, onCancel, tableName }) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="glass-panel neon-border rounded-lg p-6 max-w-2xl max-h-80 overflow-auto">
+        <h2 className="text-cyan-400 text-lg font-bold mb-4">Data Preview - {tableName}</h2>
+        <div className="text-slate-300 text-sm mb-4">
+          <p className="mb-2">Jumlah record: {data.length}</p>
+          <div className="bg-slate-900/50 p-3 rounded border border-cyan-400/20 max-h-48 overflow-auto">
+            <pre>{JSON.stringify(data, null, 2)}</pre>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button 
+            onClick={onConfirm}
+            className="flex-1 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 py-2 px-4 rounded font-semibold border border-cyan-400/50"
+          >
+            <CheckCircle className="inline w-4 h-4 mr-2" /> Confirm & Upload
+          </button>
+          <button 
+            onClick={onCancel}
+            className="flex-1 bg-slate-700/50 hover:bg-slate-700 text-slate-300 py-2 px-4 rounded font-semibold"
+          >
+            <X className="inline w-4 h-4 mr-2" /> Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ======================== ERROR NOTIFICATION ========================
+const NotificationCenter = ({ notifications, onDismiss }) => {
+  return (
+    <div className="fixed top-4 right-4 z-40 space-y-2 max-w-sm">
+      {notifications.map((notif, idx) => (
+        <div 
+          key={idx} 
+          className={`glass-panel rounded-lg p-3 flex items-start gap-2 data-flow ${
+            notif.type === 'error' ? 'border-l-4 border-l-red-500' : 
+            notif.type === 'warning' ? 'border-l-4 border-l-yellow-500' :
+            'border-l-4 border-l-green-500'
+          }`}
+        >
+          <div>
+            {notif.type === 'error' && <AlertCircle className="w-5 h-5 text-red-400" />}
+            {notif.type === 'warning' && <Clock className="w-5 h-5 text-yellow-400" />}
+            {notif.type === 'success' && <CheckCircle className="w-5 h-5 text-green-400" />}
+          </div>
+          <div className="flex-1">
+            <p className="text-sm text-slate-200">{notif.message}</p>
+            {notif.action && (
+              <button className="text-xs text-cyan-400 hover:text-cyan-300 mt-1">
+                {notif.action}
+              </button>
+            )}
+          </div>
+          <button onClick={() => onDismiss(idx)} className="text-slate-400 hover:text-slate-300">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ======================== EXECUTIVE DASHBOARD ========================
+const ExecutiveDashboard = ({ selectedMonth, selectedYear, onMonthYearChange }) => {
+  const [notifications, setNotifications] = useState([]);
+
+  const revenueData = mockDatabaseStructure.Revenue.filter(r => {
+    const rDate = new Date(r.date);
+    return rDate.getMonth() === selectedMonth && rDate.getFullYear() === selectedYear;
+  });
+
+  const totalRevenue = revenueData.reduce((sum, r) => sum + r.amount, 0) || 0;
+  const targetRevenue = 2000000000;
+  const achievement = ((totalRevenue / targetRevenue) * 100).toFixed(1);
+
+  const chartData = [
+    { month: 'Feb', revenue: 400000000, target: 500000000 },
+    { month: 'Mar', revenue: 425000000, target: 500000000 },
+    { month: 'Apr', revenue: 450000000, target: 500000000 },
+    { month: 'May', revenue: 400000000, target: 500000000 },
+    { month: 'Jun', revenue: 350000000, target: 500000000 },
+    { month: 'Jul', revenue: totalRevenue || 425000000, target: 500000000 },
+  ];
+
+  const doctorPerformance = mockDatabaseStructure['Doctor Target'];
+  const doctorRanking = [...doctorPerformance].sort((a, b) => b.achieved - a.achieved);
+
+  return (
+    <div className="flex-1 overflow-auto">
+      <div className="p-6 space-y-4">
+        {/* Header dengan Filter */}
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-100 mb-1">Executive Dashboard</h1>
+            <p className="text-slate-400 text-sm">Real-time monitoring & insights</p>
+          </div>
+          <MonthYearFilter onFilterChange={onMonthYearChange} defaultMonth={selectedMonth} defaultYear={selectedYear} />
+        </div>
+
+        {/* AI Insight Panel */}
+        <AIInsightPanel currentMonth={selectedMonth} currentYear={selectedYear} revenue={totalRevenue} target={targetRevenue} />
+
+        {/* KPI Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[
+            { title: 'Revenue MTD', value: `Rp ${(totalRevenue/1000000000).toFixed(2)} M`, status: 'online', detail: `${monthNames[selectedMonth]} ${selectedYear}` },
+            { title: 'Achievement', value: `${achievement}%`, status: achievement >= 100 ? 'online' : 'warning', detail: 'vs target' },
+            { title: 'YTD Total', value: 'Rp 2.00 M', status: 'online', detail: `Accumulated` },
+            { title: 'Top Doctor', value: doctorRanking[0]?.name || 'N/A', status: 'online', detail: `Rp ${(doctorRanking[0]?.achieved/1000000 || 0).toFixed(0)} Jt` }
+          ].map((card, i) => (
+            <div key={i} className="glass-panel holographic-gradient rounded-lg p-4 hover:shadow-lg transition-all">
+              <div className="flex items-start justify-between mb-2">
+                <span className="text-slate-400 text-sm">{card.title}</span>
+                <span className={`status-indicator status-${card.status}`}></span>
+              </div>
+              <p className="text-2xl font-bold text-cyan-300 mb-1">{card.value}</p>
+              <p className="text-slate-400 text-xs">{card.detail}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Revenue Trend Chart */}
+        <div className="glass-panel neon-border rounded-lg p-4">
+          <h2 className="text-cyan-400 font-bold text-lg mb-4">Revenue Trend & Target</h2>
+          <ResponsiveContainer width="100%" height={300}>
+            <AreaChart data={chartData}>
+              <defs>
+                <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor="#06b6d4" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,200,255,0.1)" />
+              <XAxis dataKey="month" stroke="#94a3b8" />
+              <YAxis stroke="#94a3b8" />
+              <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.9)', border: '1px solid rgba(100,200,255,0.3)' }} />
+              <Area type="monotone" dataKey="revenue" stroke="#06b6d4" fillOpacity={1} fill="url(#colorRevenue)" />
+              <Line type="monotone" dataKey="target" stroke="#f59e0b" strokeDasharray="5 5" />
+              <Legend />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Doctor Ranking */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {doctorRanking.slice(0, 3).map((doctor, i) => (
+            <div key={i} className="glass-panel neon-border rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-2xl font-bold text-orange-400">#{i + 1}</span>
+                <Trophy className="w-5 h-5 text-yellow-400" />
+              </div>
+              <p className="text-slate-200 font-semibold mb-1">{doctor.name}</p>
+              <p className="text-2xl font-bold text-cyan-300 mb-2">Rp {(doctor.achieved/1000000).toFixed(0)} Jt</p>
+              <div className="w-full bg-slate-700/30 h-2 rounded-full overflow-hidden">
+                <div className="bg-gradient-to-r from-cyan-500 to-blue-500 h-full" style={{ width: `${(doctor.achieved/doctor.target)*100}%` }}></div>
+              </div>
+              <p className="text-xs text-slate-400 mt-2">{((doctor.achieved/doctor.target)*100).toFixed(0)}% target</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <NotificationCenter notifications={notifications} onDismiss={(idx) => setNotifications(n => n.filter((_, i) => i !== idx))} />
+    </div>
+  );
+};
+
+// ======================== DATA MANAGEMENT ========================
+const DataManagement = ({ selectedMonth, selectedYear, onMonthYearChange }) => {
+  const [activeTable, setActiveTable] = useState('Revenue');
+  const [previewData, setPreviewData] = useState(null);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const fileInputRef = useRef(null);
+
+  const addNotification = (message, type = 'info', action = null) => {
+    const notif = { message, type, action };
+    setNotifications(n => [...n, notif]);
+    setTimeout(() => setNotifications(n => n.slice(1)), 5000);
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target.result);
+        setPreviewData(data);
+        setIsPreviewOpen(true);
+      } catch (error) {
+        addNotification('Format file tidak valid. Gunakan JSON.', 'error', 'Download template');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleConfirmUpload = () => {
+    setIsPreviewOpen(false);
+    addNotification(`Data ${activeTable} berhasil di-upload dan ter-validasi!`, 'success');
+    setPreviewData(null);
+  };
+
+  const tableData = mockDatabaseStructure[activeTable] || [];
+
+  return (
+    <div className="flex-1 overflow-auto">
+      <div className="p-6">
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-100 mb-1">Data Management</h1>
+            <p className="text-slate-400 text-sm">Upload, review, and manage database entries</p>
+          </div>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => window.open(DATABASE_SHEET_URL, '_blank')}
+              className="flex items-center gap-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 py-2 px-4 rounded font-semibold border border-cyan-400/50"
+            >
+              <Database className="w-4 h-4" /> Direct DB Link
+            </button>
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 bg-green-500/20 hover:bg-green-500/30 text-green-300 py-2 px-4 rounded font-semibold border border-green-400/50"
+            >
+              <Upload className="w-4 h-4" /> Upload Excel
+            </button>
+            <input ref={fileInputRef} type="file" accept=".json,.xlsx,.csv" onChange={handleFileUpload} className="hidden" />
+          </div>
+        </div>
+
+        <MonthYearFilter onFilterChange={onMonthYearChange} defaultMonth={selectedMonth} defaultYear={selectedYear} />
+
+        {/* Table Selector */}
+        <div className="flex gap-2 mb-4 flex-wrap">
+          {Object.keys(mockDatabaseStructure).map(table => (
+            <button
+              key={table}
+              onClick={() => setActiveTable(table)}
+              className={`px-4 py-2 rounded font-semibold transition-all ${
+                activeTable === table 
+                  ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-400' 
+                  : 'bg-slate-700/30 text-slate-400 hover:bg-slate-700/50 border border-slate-600'
+              }`}
+            >
+              {table}
+            </button>
+          ))}
+        </div>
+
+        {/* Data Table */}
+        <div className="glass-panel neon-border rounded-lg overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-800/50 border-b border-cyan-400/20">
+                <tr>
+                  {tableData.length > 0 && Object.keys(tableData[0]).map(key => (
+                    <th key={key} className="px-4 py-3 text-left text-cyan-400 font-semibold">{key}</th>
+                  ))}
+                  <th className="px-4 py-3 text-left text-cyan-400 font-semibold">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tableData.length === 0 ? (
+                  <tr>
+                    <td colSpan="10" className="px-4 py-8 text-center text-slate-400">
+                      No data available. Upload Excel file to get started.
+                    </td>
+                  </tr>
+                ) : (
+                  tableData.map((row, idx) => (
+                    <tr key={idx} className="border-b border-slate-700/50 hover:bg-cyan-500/5 transition-colors">
+                      {Object.values(row).map((value, i) => (
+                        <td key={i} className="px-4 py-3 text-slate-300">{String(value)}</td>
+                      ))}
+                      <td className="px-4 py-3">
+                        <div className="flex gap-2">
+                          <button className="p-1 hover:bg-cyan-500/20 rounded text-cyan-400">
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button className="p-1 hover:bg-red-500/20 rounded text-red-400">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Data Preview Modal */}
+        <DataPreviewModal 
+          isOpen={isPreviewOpen}
+          data={previewData || []}
+          tableName={activeTable}
+          onConfirm={handleConfirmUpload}
+          onCancel={() => setIsPreviewOpen(false)}
+        />
+
+        <NotificationCenter notifications={notifications} onDismiss={(idx) => setNotifications(n => n.filter((_, i) => i !== idx))} />
+      </div>
+    </div>
+  );
+};
+
+// ======================== DOCTOR DASHBOARD ========================
+const DoctorDashboard = ({ selectedMonth, selectedYear, onMonthYearChange }) => {
+  const doctorData = mockDatabaseStructure['Doctor Target'];
+  const doctorRanking = [...doctorData].sort((a, b) => b.achieved - a.achieved);
+
+  return (
+    <div className="flex-1 overflow-auto">
+      <div className="p-6 space-y-4">
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-100 mb-1">Doctor Performance</h1>
+            <p className="text-slate-400 text-sm">Individual targets & achievements</p>
+          </div>
+          <MonthYearFilter onFilterChange={onMonthYearChange} defaultMonth={selectedMonth} defaultYear={selectedYear} />
+        </div>
+
+        {/* Ranking Table */}
+        <div className="glass-panel neon-border rounded-lg overflow-hidden">
+          <div className="p-4 border-b border-cyan-400/20">
+            <h2 className="text-cyan-400 font-bold">Doctor Ranking - {monthNames[selectedMonth]} {selectedYear}</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-800/50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-cyan-400 font-semibold">Rank</th>
+                  <th className="px-4 py-3 text-left text-cyan-400 font-semibold">Doctor Name</th>
+                  <th className="px-4 py-3 text-right text-cyan-400 font-semibold">Target</th>
+                  <th className="px-4 py-3 text-right text-cyan-400 font-semibold">Achieved</th>
+                  <th className="px-4 py-3 text-center text-cyan-400 font-semibold">Progress</th>
+                  <th className="px-4 py-3 text-center text-cyan-400 font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {doctorRanking.map((doctor, idx) => {
+                  const progress = ((doctor.achieved / doctor.target) * 100).toFixed(0);
+                  const status = progress >= 100 ? 'Excellent' : progress >= 80 ? 'Good' : 'Warning';
+                  
+                  return (
+                    <tr key={idx} className="border-b border-slate-700/50 hover:bg-cyan-500/5">
+                      <td className="px-4 py-3">
+                        <span className="text-xl font-bold text-yellow-400">#{idx + 1}</span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-200">{doctor.name}</td>
+                      <td className="px-4 py-3 text-right text-slate-300">Rp {(doctor.target/1000000).toFixed(0)}Jt</td>
+                      <td className="px-4 py-3 text-right text-cyan-300 font-semibold">Rp {(doctor.achieved/1000000).toFixed(0)}Jt</td>
+                      <td className="px-4 py-3">
+                        <div className="w-full bg-slate-700/30 h-2 rounded-full overflow-hidden">
+                          <div 
+                            className="bg-gradient-to-r from-cyan-500 to-green-500 h-full transition-all" 
+                            style={{ width: `${Math.min(progress, 100)}%` }}
+                          ></div>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1">{progress}%</p>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          status === 'Excellent' ? 'bg-green-500/20 text-green-300' :
+                          status === 'Good' ? 'bg-cyan-500/20 text-cyan-300' :
+                          'bg-yellow-500/20 text-yellow-300'
+                        }`}>
+                          {status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Individual Doctor Cards */}
+        <div>
+          <h2 className="text-cyan-400 font-bold text-lg mb-4">Detailed Performance</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {doctorRanking.map((doctor, i) => (
+              <div key={i} className="glass-panel holographic-gradient rounded-lg p-4">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <p className="text-slate-300 text-sm mb-1">Doctor</p>
+                    <p className="text-cyan-300 font-bold">{doctor.name}</p>
+                  </div>
+                  <Trophy className="w-5 h-5 text-yellow-400" />
+                </div>
+                <div className="space-y-2 mb-3">
+                  <div>
+                    <p className="text-slate-400 text-xs">Achievement</p>
+                    <p className="text-2xl font-bold text-green-400">Rp {(doctor.achieved/1000000).toFixed(0)}Jt</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-400 text-xs">Target</p>
+                    <p className="text-slate-300 text-sm">Rp {(doctor.target/1000000).toFixed(0)}Jt</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ======================== EMPLOYEE DASHBOARD ========================
+const EmployeeDashboard = ({ selectedMonth, selectedYear, onMonthYearChange }) => {
+  const employeeData = mockDatabaseStructure['Employee Target'];
+  const employeeRanking = [...employeeData].sort((a, b) => b.achieved - a.achieved);
+
+  return (
+    <div className="flex-1 overflow-auto">
+      <div className="p-6 space-y-4">
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-100 mb-1">Employee Performance</h1>
+            <p className="text-slate-400 text-sm">Track team targets & achievements</p>
+          </div>
+          <MonthYearFilter onFilterChange={onMonthYearChange} defaultMonth={selectedMonth} defaultYear={selectedYear} />
+        </div>
+
+        {/* Ranking Table */}
+        <div className="glass-panel neon-border rounded-lg overflow-hidden">
+          <div className="p-4 border-b border-cyan-400/20">
+            <h2 className="text-cyan-400 font-bold">Employee Ranking - {monthNames[selectedMonth]} {selectedYear}</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-800/50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-cyan-400 font-semibold">Rank</th>
+                  <th className="px-4 py-3 text-left text-cyan-400 font-semibold">Employee</th>
+                  <th className="px-4 py-3 text-left text-cyan-400 font-semibold">Role</th>
+                  <th className="px-4 py-3 text-right text-cyan-400 font-semibold">Target</th>
+                  <th className="px-4 py-3 text-right text-cyan-400 font-semibold">Achieved</th>
+                  <th className="px-4 py-3 text-center text-cyan-400 font-semibold">Progress</th>
+                </tr>
+              </thead>
+              <tbody>
+                {employeeRanking.map((emp, idx) => {
+                  const progress = ((emp.achieved / emp.target) * 100).toFixed(0);
+                  
+                  return (
+                    <tr key={idx} className="border-b border-slate-700/50 hover:bg-cyan-500/5">
+                      <td className="px-4 py-3">
+                        <span className="text-xl font-bold text-yellow-400">#{idx + 1}</span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-200 font-semibold">{emp.name}</td>
+                      <td className="px-4 py-3 text-slate-400">{emp.role}</td>
+                      <td className="px-4 py-3 text-right text-slate-300">{emp.target}</td>
+                      <td className="px-4 py-3 text-right text-cyan-300 font-semibold">{emp.achieved}</td>
+                      <td className="px-4 py-3">
+                        <div className="w-full bg-slate-700/30 h-2 rounded-full overflow-hidden">
+                          <div 
+                            className="bg-gradient-to-r from-cyan-500 to-green-500 h-full" 
+                            style={{ width: `${Math.min(progress, 100)}%` }}
+                          ></div>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1">{progress}%</p>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ======================== SETTINGS ========================
+const Settings = () => {
+  return (
+    <div className="flex-1 overflow-auto p-6">
+      <h1 className="text-3xl font-bold text-slate-100 mb-4">Settings</h1>
+      <div className="glass-panel neon-border rounded-lg p-6 max-w-2xl">
+        <div className="space-y-4">
+          <div>
+            <label className="text-slate-300 font-semibold block mb-2">Database Connection</label>
+            <input type="text" value={DATABASE_SHEET_URL} readOnly className="input-neon w-full" />
+            <p className="text-slate-400 text-xs mt-1">Connected to Google Sheets</p>
+          </div>
+          <div>
+            <label className="text-slate-300 font-semibold block mb-2">Auto Sync Interval</label>
+            <select className="input-neon w-full">
+              <option>Every 5 minutes</option>
+              <option>Every 15 minutes</option>
+              <option>Every hour</option>
+            </select>
+          </div>
+          <button className="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 py-2 px-6 rounded font-semibold border border-cyan-400/50">
+            Save Settings
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ======================== MAIN APP COMPONENT ========================
+const MBGDashboard = () => {
+  const [activeMenu, setActiveMenu] = useState('Dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [selectedYear, setSelectedYear] = useState(currentYear);
+
+  const handleMonthYearChange = (month, year) => {
+    setSelectedMonth(month);
+    setSelectedYear(year);
+  };
+
+  const menuItems = [
+    { name: 'Executive Dashboard', icon: BarChart3 },
+    { name: 'Doctor Performance', icon: Users },
+    { name: 'Employee Performance', icon: Activity },
+    { name: 'Data Management', icon: Database },
+    { name: 'Settings', icon: Settings },
+  ];
+
+  return (
+    <div className="flex h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+      {/* Sidebar */}
+      <div className={`${sidebarOpen ? 'w-64' : 'w-20'} bg-slate-900/50 backdrop-blur-sm border-r border-cyan-400/10 transition-all duration-300 flex flex-col`}>
+        <div className="p-4 border-b border-cyan-400/10 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center">
+            <BarChart3 className="w-6 h-6 text-white" />
+          </div>
+          {sidebarOpen && <span className="text-cyan-400 font-bold text-lg">MBG Pro</span>}
+        </div>
+
+        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+          {menuItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeMenu === item.name;
+            return (
+              <button
+                key={item.name}
+                onClick={() => setActiveMenu(item.name)}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                  isActive
+                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/50'
+                    : 'text-slate-400 hover:bg-slate-800/50'
+                }`}
+              >
+                <Icon className="w-5 h-5 flex-shrink-0" />
+                {sidebarOpen && <span className="text-sm font-medium">{item.name}</span>}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="p-4 border-t border-cyan-400/10">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="w-full flex items-center justify-center p-2 hover:bg-slate-800/50 rounded-lg text-slate-400"
+          >
+            {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col">
+        {/* Top Bar */}
+        <div className="bg-slate-900/50 backdrop-blur-sm border-b border-cyan-400/10 px-6 py-4 flex justify-between items-center">
+          <h2 className="text-slate-100 font-semibold">{activeMenu}</h2>
+          <div className="text-slate-400 text-sm">
+            {monthNames[selectedMonth]} {selectedYear}
+          </div>
+        </div>
+
+        {/* Content */}
+        {activeMenu === 'Executive Dashboard' && <ExecutiveDashboard selectedMonth={selectedMonth} selectedYear={selectedYear} onMonthYearChange={handleMonthYearChange} />}
+        {activeMenu === 'Data Management' && <DataManagement selectedMonth={selectedMonth} selectedYear={selectedYear} onMonthYearChange={handleMonthYearChange} />}
+        {activeMenu === 'Doctor Performance' && <DoctorDashboard selectedMonth={selectedMonth} selectedYear={selectedYear} onMonthYearChange={handleMonthYearChange} />}
+        {activeMenu === 'Employee Performance' && <EmployeeDashboard selectedMonth={selectedMonth} selectedYear={selectedYear} onMonthYearChange={handleMonthYearChange} />}
+        {activeMenu === 'Settings' && <Settings />}
+      </div>
+    </div>
+  );
+};
+
+// ======================== RENDER APP ========================
+const root = createRoot(document.getElementById('root'));
+root.render(<MBGDashboard />);
+</script>
+
+</body>
+</html>

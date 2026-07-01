@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MBG Monitoring Dashboard Online v4</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@18.2.0",
+      "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+      "lucide-react": "https://esm.sh/lucide-react@0.292.0"
+    }
+  }
+  </script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    ::-webkit-scrollbar{width:5px;height:5px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#334155;border-radius:10px}
+    ::-webkit-scrollbar-thumb:hover{background:#475569}
+    body{margin:0;padding:0;overflow:hidden}
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+    .fade-in{animation:fadeInUp .25s ease-out both}
+    @keyframes pulse-glow{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,0)}50%{box-shadow:0 0 12px 2px rgba(16,185,129,0.25)}}
+    .pulse-badge{animation:pulse-glow 2s infinite}
+    @keyframes slideIn{from{transform:translateX(-100%);opacity:0}to{transform:translateX(0);opacity:1}}
+    .slide-in{animation:slideIn 0.3s ease-out}
+    @keyframes shimmer{0%{background-position:200% center}50%{background-position:0 center}100%{background-position:-200% center}}
+    .shimmer{background-size:200% 100%;animation:shimmer 2s infinite}
+    .chart-container{position:relative;height:300px;width:100%}
+    .glass-effect{background:rgba(255,255,255,0.08);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.1)}
+  </style>
+</head>
+<body class="antialiased">
+<div id="root"></div>
+
+<script type="text/babel" data-type="module">
+import React,{useState,useEffect,useMemo,useRef,useCallback,Fragment}from'react';
+import{createRoot}from'react-dom/client';
+import{
+  Search,Bell,Moon,Sun,ChevronDown,ChevronLeft,Zap,BarChart2,Briefcase,
+  LayoutDashboard,Users,FileText,Settings,Activity,Folder,Stethoscope,
+  PieChart,TrendingUp,TrendingDown,UserPlus,Database,Lock,Boxes,
+  Calendar,ClipboardList,Trophy,MapPin,CheckCircle,Target,Sparkles,
+  Wallet,HeartPulse,LineChart,Bug,BellRing,ShieldCheck,AlertTriangle,
+  Pill,Package,Filter,Plus,Download,ChevronRight,Upload,FileSpreadsheet,
+  Printer,X,Eye,RefreshCw,Info,Table2,ArrowUpDown,FileDown,FileUp,
+  CheckSquare,XCircle,ChevronUp,Save,Edit2,Trash2,BarChart,Star,
+  ArrowUp,ArrowDown,Clock,UserCheck,DollarSign,Percent,Hash,
+  Zap as Lightning,GitBranch,AlertCircle,Lightbulb,TrendingUpIcon,Send
+}from'lucide-react';
+
+// ── Google Apps Script Integration ──────────────────────────────────────────
+const GOOGLE_APPS_SCRIPT_URL='https://script.google.com/macros/s/AKfycbwcOVV7FUJzWGUCoEnlKLPNGeGVv9326I_KAqIqcMtn/usercodeapp';
+
+const callGoogleAppsScript=async(action,data={})=>{
+  try{
+    const response=await fetch(GOOGLE_APPS_SCRIPT_URL,{
+      method:'POST',
+      mode:'no-cors',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action,...data})
+    });
+    return{success:true,data:null};
+  }catch(e){
+    console.error('GAS Error:',e);
+    return{success:false,error:e.message};
+  }
+};
+
+// ── Sheet Data Handler ──────────────────────────────────────────────────────
+const fetchSheetData=async()=>{
+  try{
+    const sheetId='1eih0c1uTMZEY4bH5V0r-qnQjD2Y48M66L4QBWRi8Hxs';
+    const sheets=['Revenue','Dokter','Karyawan','Inventory','Treatment','Target'];
+    const data={};
+    
+    for(const sheet of sheets){
+      const url=`https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${sheet}`;
+      try{
+        const response=await fetch(url);
+        const text=await response.text();
+        const json=JSON.parse(text.match(/\{[\s\S]*\}/)[0]);
+        data[sheet]=json.table.rows.map(row=>row.c.map(cell=>cell?.v||''));
+      }catch(e){
+        console.warn(`Failed to load ${sheet}:`,e);
+        data[sheet]=[];
+      }
+    }
+    return data;
+  }catch(e){
+    console.error('Sheet fetch error:',e);
+    return{};
+  }
+};
+
+// ── LocalStorage Cache ──────────────────────────────────────────────────────
+const DB_KEY='mbg_online_db_v4';
+const getCachedData=()=>{
+  try{
+    const cached=localStorage.getItem(DB_KEY);
+    return cached?JSON.parse(cached):null;
+  }catch{
+    return null;
+  }
+};
+const setCachedData=(data)=>{
+  try{
+    localStorage.setItem(DB_KEY,JSON.stringify(data));
+  }catch(e){
+    console.warn('Cache error:',e);
+  }
+};
+
+const initDefaultData=()=>({
+  meta:{lastUpdate:new Date().toISOString(),version:4,source:'online',syncStatus:'synced'},
+  revenue:[
+    {bulan:'Feb',tahun:2026,realisasi:378529475,target:500000000,partial:false},
+    {bulan:'Mar',tahun:2026,realisasi:443414263,target:500000000,partial:false},
+    {bulan:'Apr',tahun:2026,realisasi:396087850,target:500000000,partial:false},
+    {bulan:'Mei',tahun:2026,realisasi:339131200,target:500000000,partial:false},
+    {bulan:'Jun',tahun:2026,realisasi:265325550,target:500000000,partial:true},
+    {bulan:'Jul',tahun:2026,realisasi:180000000,target:500000000,partial:true},
+  ],
+  doctors:[
+    {name:'dr. Amelia Putri',target:62000000,revenue:68500000,consult:142,treatment:98,product:18500000},
+    {name:'dr. Bagas Saputra',target:58000000,revenue:55200000,consult:128,treatment:84,product:14200000},
+    {name:'dr. Citra Maharani',target:60000000,revenue:41800000,consult:110,treatment:61,product:9800000},
+    {name:'dr. Devi Anggraini',target:55000000,revenue:59600000,consult:131,treatment:90,product:16100000},
+    {name:'dr. Eka Pratama',target:57000000,revenue:38900000,consult:102,treatment:58,product:8400000},
+    {name:'dr. Farah Salsabila',target:60000000,revenue:71200000,consult:150,treatment:104,product:19800000},
+  ],
+  employees:[
+    {name:'Fitria Nor Istiqomah',role:'Branch Manager',dept:'Management',status:'Aktif',kpi:94},
+    {name:'Rara Anindya',role:'Frontliner',dept:'Customer Service',status:'Aktif',kpi:88},
+    {name:'Budi Santoso',role:'Admin Online',dept:'Marketing',status:'Aktif',kpi:82},
+  ],
+  inventory:[
+    {kode:'PRD-001',nama:'Brightening Serum 15ml',kategori:'Produk',stok:4,min_stok:10,harga:250000},
+    {kode:'PRD-002',nama:'Sunscreen SPF50 30ml',kategori:'Produk',stok:22,min_stok:15,harga:185000},
+    {kode:'MED-001',nama:'Tretinoin 0.05% Cream',kategori:'Obat',stok:8,min_stok:5,harga:95000},
+  ],
+  treatments:[
+    {nama:'PRO YELLOW LASER COMPLETE',kategori:'Laser',total:189839888,qty:148,target_tahun:200},
+    {nama:'PICOFRONT LASER COMPLETE',kategori:'Laser',total:155812500,qty:119,target_tahun:180},
+    {nama:'KOREAN TONING FACIAL',kategori:'Facial',total:120790000,qty:210,target_tahun:250},
+  ],
+  uploadHistory:[],
+  notifications:[
+    {id:1,type:'warning',title:'Stok menipis',msg:'Brightening Serum 15ml — sisa 4 unit',time:'2 jam lalu',read:false},
+    {id:2,type:'success',title:'Data sinkronisasi berhasil',msg:'Revenue & Dokter data updated',time:'1 jam lalu',read:false},
+    {id:3,type:'info',title:'Jadwal maintenance',msg:'Laser Pico — maintenance 5 Juli 2026',time:'3 hari lalu',read:true},
+  ]
+});
+
+const useOnlineDB=()=>{
+  const[db,setDbState]=useState(()=>getCachedData()||initDefaultData());
+  const[syncing,setSyncing]=useState(false);
+  const setDB=useCallback(updater=>{
+    setDbState(prev=>{
+      const next=typeof updater==='function'?updater(prev):{...prev,...updater};
+      next.meta={...next.meta,lastUpdate:new Date().toISOString()};
+      setCachedData(next);
+      return next;
+    });
+  },[]);
+  const syncWithSheet=useCallback(async()=>{
+    setSyncing(true);
+    const sheetData=await fetchSheetData();
+    if(Object.keys(sheetData).length>0){
+      setDB(prev=>({...prev,meta:{...prev.meta,syncStatus:'synced',lastSync:new Date().toISOString()}}));
+    }
+    setSyncing(false);
+  },[setDB]);
+  return{db,setDB,syncing,syncWithSheet};
+};
+
+// ── Hooks ───────────────────────────────────────────────────────────────────
+const useAnimatedNumber=(end,dur=1200,isFloat=false)=>{
+  const[v,set]=useState(0);
+  useEffect(()=>{let ts=null;const step=t=>{if(!ts)ts=t;const p=Math.min((t-ts)/dur,1);const e=1-Math.pow(1-p,3);set(isFloat?+(e*end).toFixed(1):Math.floor(e*end));if(p<1)requestAnimationFrame(step);};requestAnimationFrame(step);},[end,dur,isFloat]);
+  return v;
+};
+
+const useToast=()=>{
+  const[toasts,set]=useState([]);
+  const add=useCallback((msg,type='info',duration=4000)=>{
+    const id=Date.now();
+    set(p=>[...p,{id,msg,type}]);
+    if(duration>0)setTimeout(()=>set(p=>p.filter(t=>t.id!==id)),duration);
+    return id;
+  },[]);
+  const remove=useCallback(id=>set(p=>p.filter(t=>t.id!==id)),[]);
+  return{toasts,add,remove};
+};
+
+// ── Formatters ───────────────────────────────────────────────────────────────
+const fmtRp=n=>'Rp '+Math.round(n).toLocaleString('id-ID');
+const fmtRpS=n=>{if(Math.abs(n)>=1e9)return'Rp '+(n/1e9).toFixed(2)+' M';if(Math.abs(n)>=1e6)return'Rp '+(n/1e6).toFixed(0)+' Jt';return fmtRp(n);};
+const achColor=p=>(p>=90?'emerald':p>=70?'amber':'rose');
+const achLabel=p=>(p>=90?'Hijau':p>=70?'Kuning':'Merah');
+const fmtDate=s=>{try{return new Date(s).toLocaleString('id-ID',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});}catch{return s;}};
+const getCurrentMonth=()=>{const now=new Date();const months=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];return{bulan:months[now.getMonth()],tahun:now.getFullYear()};};
+
+// ── Theme ────────────────────────────────────────────────────────────────────
+const useTheme=dark=>useMemo(()=>({
+  bg:dark?'#060a12':'#f0f2f5',
+  panelBg:dark?'bg-[#0b101e]/60':'bg-white/85',
+  panelBorder:dark?'border-white/5':'border-black/5',
+  sidebarBg:dark?'bg-[#0a0f1c]/90':'bg-white/95',
+  headerBg:dark?'bg-[#060a12]/60':'bg-white/80',
+  text:dark?'text-slate-200':'text-slate-800',
+  textMuted:dark?'text-slate-400':'text-slate-500',
+  textFaint:dark?'text-slate-500':'text-slate-400',
+  hoverBg:dark?'hover:bg-white/5':'hover:bg-black/5',
+  inputBg:dark?'bg-white/5 border-white/10':'bg-black/[0.03] border-black/10',
+  divider:dark?'border-white/5':'border-black/5',
+  tableTh:dark?'bg-white/[0.03]':'bg-black/[0.03]',
+  rowHover:dark?'hover:bg-white/[0.04]':'hover:bg-black/[0.03]',
+}),[dark]);
+
+// ── Primitives ───────────────────────────────────────────────────────────────
+const Toast=({toasts,remove})=>(
+  <div className="fixed bottom-6 right-6 z-[999] flex flex-col gap-2 pointer-events-none">
+    {toasts.map(t=>(
+      <div key={t.id} className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border backdrop-blur-xl text-sm font-medium pointer-events-auto transition-all fade-in ${t.type==='success'?'bg-emerald-900/90 border-emerald-500/40 text-emerald-200':t.type==='error'?'bg-rose-900/90 border-rose-500/40 text-rose-200':'bg-slate-800/90 border-white/10 text-slate-200'}`}>
+        {t.type==='success'?<CheckCircle size={15}/>:t.type==='error'?<XCircle size={15}/>:<Info size={15}/>}
+        {t.msg}
+        <button onClick={()=>remove(t.id)} className="ml-2 opacity-50 hover:opacity-100"><X size={13}/></button>
+      </div>
+    ))}
+  </div>
+);
+
+const Card=({children,className='',glow='',dark,p='p-5'})=>(
+  <div className={`relative group rounded-2xl ${dark?'bg-[#0b101e]/60 border-white/5':'bg-white/90 border-black/[0.06] shadow-sm'} backdrop-blur-xl border transition-all duration-300 ${className}`}>
+    {glow&&dark&&<div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl blur-xl ${glow} -z-10`}/>}
+    <div className={`relative z-10 ${p} h-full flex flex-col`}>{children}</div>
+  </div>
+);
+
+const Badge=({label,color})=>(
+  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-${color}-500/15 text-${color}-400 border border-${color}-500/30`}>{label}</span>
+);
+
+const ProgressBar=({pct,color='emerald'})=>(
+  <div className="w-full h-1.5 rounded-full overflow-hidden bg-white/5">
+    <div className={`h-full rounded-full bg-${color}-400 transition-all duration-700`} style={{width:`${Math.min(pct,100)}%`}}/>
+  </div>
+);
+
+const Btn=({children,onClick,color='emerald',size='sm',variant='solid',className='',disabled=false,icon:Icon,loading=false})=>{
+  const sizes={sm:'px-3 py-1.5 text-xs',md:'px-4 py-2 text-sm',lg:'px-5 py-2.5 text-sm'};
+  const variants={
+    solid:`bg-${color}-500 hover:bg-${color}-400 text-white`,
+    outline:`border border-${color}-500/50 text-${color}-400 hover:bg-${color}-500/10`,
+    ghost:`text-${color}-400 hover:bg-${color}-500/10`,
+  };
+  return(
+    <button onClick={onClick} disabled={disabled||loading} className={`flex items-center gap-1.5 rounded-lg font-semibold transition-all ${sizes[size]} ${variants[variant]} ${disabled||loading?'opacity-40 cursor-not-allowed':''} ${className}`}>
+      {loading?<RefreshCw size={13} className="animate-spin"/>:Icon&&<Icon size={13}/>}{children}
+    </button>
+  );
+};
+
+const Input=({label,value,onChange,type='text',placeholder='',dark,T,className=''})=>(
+  <div className={className}>
+    {label&&<label className={`block text-[10px] font-semibold uppercase tracking-wider mb-1.5 ${T.textFaint}`}>{label}</label>}
+    <input type={type} value={value} onChange={onChange} placeholder={placeholder}
+      className={`w-full rounded-lg px-3 py-2 text-sm border outline-none focus:border-emerald-500/50 transition-all ${T.inputBg} ${T.text}`}/>
+  </div>
+);
+
+const Modal=({open,onClose,title,children,dark,T,width='max-w-lg'})=>{
+  if(!open)return null;
+  return(
+    <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose}/>
+      <div className={`relative z-10 w-full ${width} rounded-2xl border ${dark?'bg-[#0d1120] border-white/10':'bg-white border-black/10'} shadow-2xl fade-in max-h-[90vh] overflow-y-auto`}>
+        <div className={`flex items-center justify-between px-5 py-4 border-b sticky top-0 ${T.divider}`}>
+          <h3 className={`font-bold text-sm ${T.text}`}>{title}</h3>
+          <button onClick={onClose} className={`${T.textFaint} hover:text-rose-400`}><X size={16}/></button>
+        </div>
+        <div className="p-5">{children}</div>
+      </div>
+    </div>
+  );
+};
+
+const SectionHeader=({icon:Icon,title,color='cyan',T,children})=>(
+  <div className="flex items-center justify-between mb-5">
+    <div className="flex items-center gap-2">
+      <Icon size={16} className={`text-${color}-400`}/>
+      <h3 className={`text-sm font-bold tracking-wide uppercase ${T.text}`}>{title}</h3>
+    </div>
+    {children}
+  </div>
+);
+
+const EmptyState=({icon:Icon=Database,msg='Belum ada data.',T})=>(
+  <div className={`text-center py-10 ${T.textFaint}`}>
+    <Icon size={32} className="mx-auto mb-2 opacity-30"/>
+    <p className="text-xs">{msg}</p>
+  </div>
+);
+
+// ── KPI Card ─────────────────────────────────────────────────────────────────
+const KpiCard=({title,value,sub,trend,trendUp=true,icon:Icon,isRupiah=false,color='cyan',dark,T})=>{
+  const numeric=isRupiah?Math.round(value/1000):value;
+  const animated=useAnimatedNumber(numeric,1200);
+  const display=isRupiah?fmtRpS(animated*1000):animated;
+  return(
+    <Card dark={dark} glow={`bg-${color}-500/5`}>
+      <div className="flex justify-between items-start mb-2">
+        <span className={`text-[10px] font-semibold tracking-wider uppercase ${T.textFaint}`}>{title}</span>
+        {Icon&&<div className={`p-2 rounded-lg bg-${color}-500/10 border border-${color}-500/20 text-${color}-400`}><Icon size={15}/></div>}
+      </div>
+      <div className={`text-2xl font-bold ${dark?'text-white':'text-slate-900'} mb-1`}>{display}</div>
+      <div className={`text-xs ${T.textMuted} mb-3`}>{sub}</div>
+      <div className={`mt-auto text-xs font-semibold flex items-center gap-1 ${trendUp?'text-emerald-400':'text-rose-400'}`}>
+        {trendUp?<ArrowUp size={12}/>:<ArrowDown size={12}/>}{trend}
+      </div>
+    </Card>
+  );
+};
+
+// ── Data Review Modal ───────────────────────────────────────────────────────
+function DataReviewModal({open,onClose,data,onConfirm,dark,T,title}){
+  const[editedData,setEditedData]=useState(data);
+  const[errors,setErrors]=useState([]);
+
+  useEffect(()=>{setEditedData(data);setErrors([]);},[data,open]);
+
+  const validateData=()=>{
+    const newErrors=[];
+    if(!editedData||editedData.length===0){
+      newErrors.push('Data kosong');
+      return newErrors;
+    }
+    editedData.forEach((row,idx)=>{
+      if(typeof row==='object'){
+        Object.entries(row).forEach(([key,val])=>{
+          if(!val&&key!=='note'){
+            newErrors.push(`Baris ${idx+1}: ${key} kosong`);
+          }
+        });
+      }
+    });
+    return newErrors;
+  };
+
+  const handleConfirm=()=>{
+    const errs=validateData();
+    if(errs.length>0){
+      setErrors(errs);
+      return;
+    }
+    onConfirm(editedData);
+    onClose();
+  };
+
+  return(
+    <Modal open={open} onClose={onClose} title={title||'Review Data Sebelum Submit'} dark={dark} T={T} width="max-w-3xl">
+      {errors.length>0&&(
+        <div className="mb-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/30">
+          <p className="text-xs font-bold text-rose-400 mb-2">⚠ {errors.length} Error:</p>
+          <div className="space-y-1">
+            {errors.slice(0,5).map((e,i)=><p key={i} className="text-[11px] text-rose-300">{e}</p>)}
+            {errors.length>5&&<p className="text-[11px] text-rose-300">... dan {errors.length-5} error lainnya</p>}
+          </div>
+        </div>
+      )}
+      <div className="overflow-x-auto mb-4 max-h-60 overflow-y-auto">
+        <table className="w-full text-left text-xs">
+          <thead><tr className={`border-b ${T.divider} ${T.textFaint} sticky top-0 ${T.tableTh}`}>
+            {Array.isArray(editedData[0])?editedData[0].map((h,i)=><th key={i} className="pb-2 px-2">{h}</th>):Object.keys(editedData[0]||{}).map(k=><th key={k} className="pb-2 px-2">{k}</th>)}
+          </tr></thead>
+          <tbody>{editedData.slice(Array.isArray(editedData[0])?1:0).map((row,i)=>(
+            <tr key={i} className={`border-b ${T.divider} ${T.rowHover}`}>
+              {Array.isArray(row)?row.map((cell,j)=><td key={j} className={`py-2 px-2 ${T.text}`}>{String(cell).slice(0,50)}</td>):Object.values(row).map((val,j)=><td key={j} className={`py-2 px-2 ${T.text}`}>{String(val).slice(0,50)}</td>)}
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+      <div className="flex gap-2">
+        <Btn icon={CheckCircle} onClick={handleConfirm} color="emerald" size="md">Konfirmasi & Submit</Btn>
+        <Btn icon={X} onClick={onClose} variant="outline" color="rose" size="md">Batal</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+// ── 1. Executive Dashboard ──────────────────────────────────────────────────
+function PageDashboard({dark,T,db,addToast}){
+  const rev=db.revenue;
+  const curr=rev[rev.length-1];
+  const total=rev.reduce((s,d)=>s+d.realisasi,0);
+  const achv=(curr.realisasi/curr.target)*100;
+  const docs=[...db.doctors].sort((a,b)=>b.revenue-a.revenue);
+  const chartRef=useRef(null);
+  const chartInstance=useRef(null);
+  const[selectedMonth,setSelectedMonth]=useState(curr.bulan);
+  const[selectedYear,setSelectedYear]=useState(curr.tahun);
+
+  const filteredRev=rev.filter(r=>r.tahun===selectedYear);
+  const filteredCurr=filteredRev.find(r=>r.bulan===selectedMonth)||filteredRev[filteredRev.length-1];
+  const filteredAchv=(filteredCurr.realisasi/filteredCurr.target)*100;
+
+  useEffect(()=>{
+    if(!chartRef.current)return;
+    if(chartInstance.current)chartInstance.current.destroy();
+    const ctx=chartRef.current.getContext('2d');
+    chartInstance.current=new Chart(ctx,{
+      type:'line',
+      data:{
+        labels:filteredRev.map(d=>`${d.bulan} '${String(d.tahun).slice(2)}`),
+        datasets:[
+          {
+            label:'Realisasi',
+            data:filteredRev.map(d=>d.realisasi),
+            borderColor:'#10b981',
+            backgroundColor:'rgba(16,185,129,0.1)',
+            fill:true,
+            tension:0.4,
+            pointBackgroundColor:'#10b981',
+            pointBorderColor:'#fff',
+          },
+          {
+            label:'Target',
+            data:filteredRev.map(d=>d.target),
+            borderColor:'#06b6d4',
+            borderDash:[5,5],
+            backgroundColor:'rgba(6,182,212,0.05)',
+            tension:0.4,
+            pointBackgroundColor:'#06b6d4',
+          }
+        ]
+      },
+      options:{
+        responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{position:'top',labels:{color:dark?'#cbd5e1':'#334155',font:{size:11}}}},
+        scales:{
+          y:{
+            beginAtZero:true,
+            ticks:{color:dark?'#94a3b8':'#475569'},
+            grid:{color:dark?'rgba(255,255,255,0.05)':'rgba(0,0,0,0.05)'}
+          },
+          x:{ticks:{color:dark?'#94a3b8':'#475569'}}
+        }
+      }
+    });
+  },[filteredRev,dark]);
+
+  return(
+    <div className="fade-in space-y-5">
+      {/* AI Comment */}
+      <Card dark={dark} glow="bg-gradient-to-r from-cyan-500/5 to-emerald-500/5">
+        <div className="flex gap-3">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-400 to-emerald-400 flex items-center justify-center text-white flex-shrink-0">
+            <Lightbulb size={18}/>
+          </div>
+          <div className="flex-1">
+            <p className={`text-sm font-bold ${T.text} mb-1`}>💡 AI Insight — Performa Bulan {filteredCurr.bulan}</p>
+            <p className={`text-xs leading-relaxed ${T.textMuted}`}>
+              {filteredAchv>=90?`🎯 Target achievement ${filteredAchv.toFixed(1)}% — Excellent performance! Lanjutkan momentum ini. Realisasi ${fmtRpS(filteredCurr.realisasi)} mencapai target ${fmtRpS(filteredCurr.target)}.`
+              :filteredAchv>=70?`📊 Achievement ${filteredAchv.toFixed(1)}% — Perlu akselerasi untuk mencapai target. Masih butuh ${fmtRpS(filteredCurr.target-filteredCurr.realisasi)} lagi.`
+              :`⚠️ Achievement hanya ${filteredAchv.toFixed(1)}% — Urgent! Gap mencapai ${fmtRpS(filteredCurr.target-filteredCurr.realisasi)}. Review strategi penjualan dokter dengan pencapaian rendah.`}
+            </p>
+            <div className="flex gap-2 mt-2">
+              <Badge label={achLabel(filteredAchv)} color={achColor(filteredAchv)}/>
+              <Badge label={filteredCurr.partial?'Parsial':'Final'} color="blue"/>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* Status Banner */}
+      <div className={`rounded-xl border px-5 py-3 flex items-center justify-between gap-4 flex-wrap ${filteredAchv>=90?'bg-emerald-500/10 border-emerald-500/30':filteredAchv>=70?'bg-amber-500/10 border-amber-500/30':'bg-rose-500/10 border-rose-500/30'}`}>
+        <div className="flex items-center gap-3">
+          {filteredAchv>=90?<CheckCircle className="text-emerald-400" size={18}/>:<AlertTriangle className={filteredAchv>=70?'text-amber-400':'text-rose-400'} size={18}/>}
+          <div>
+            <p className={`text-sm font-semibold ${T.text}`}>Status: <span className={`text-${achColor(filteredAchv)}-400`}>{achLabel(filteredAchv)} — {filteredAchv.toFixed(1)}%</span></p>
+            <p className={`text-xs ${T.textMuted}`}>Realisasi {filteredCurr.bulan} {filteredCurr.tahun}: {fmtRpS(filteredCurr.realisasi)} dari target {fmtRpS(filteredCurr.target)}</p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <select value={selectedMonth} onChange={e=>setSelectedMonth(e.target.value)} className={`px-2 py-1 text-xs rounded border ${T.inputBg} ${T.text}`}>
+            {rev.map(r=><option key={r.bulan} value={r.bulan}>{r.bulan}</option>)}
+          </select>
+          <select value={selectedYear} onChange={e=>setSelectedYear(Number(e.target.value))} className={`px-2 py-1 text-xs rounded border ${T.inputBg} ${T.text}`}>
+            {[2024,2025,2026].map(y=><option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* KPI Row */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard title="Revenue Bulan Ini" value={filteredCurr.realisasi} isRupiah sub={`${filteredCurr.bulan} ${filteredCurr.tahun}${filteredCurr.partial?' (parsial)':''}`} trend={`${filteredAchv.toFixed(0)}% target`} trendUp={filteredAchv>=70} icon={Wallet} color="cyan" dark={dark} T={T}/>
+        <KpiCard title="Achievement" value={filteredAchv} sub="vs target bulanan" trend={filteredAchv>=90?'On track ✓':filteredAchv>=70?'Perlu akselerasi':'Di bawah target!'} trendUp={filteredAchv>=70} icon={Target} color={achColor(filteredAchv)} dark={dark} T={T}/>
+        <KpiCard title="Total Akumulasi" value={total} isRupiah sub={`${rev[0].bulan}–${curr.bulan} ${curr.tahun}`} trend="Akumulasi YTD" trendUp icon={TrendingUp} color="emerald" dark={dark} T={T}/>
+        <KpiCard title="Top Dokter" value={docs[0].revenue} isRupiah sub={docs[0].name} trend={`${((docs[0].revenue/docs[0].target)*100).toFixed(0)}%`} trendUp icon={Stethoscope} color="purple" dark={dark} T={T}/>
+      </div>
+
+      {/* Revenue Trend Chart */}
+      <Card dark={dark} glow="bg-cyan-500/5">
+        <SectionHeader icon={LineChart} title="Tren Revenue & Target" color="cyan" T={T}/>
+        <div className="chart-container">
+          <canvas ref={chartRef}/>
+        </div>
+      </Card>
+
+      {/* Doctor Top 3 */}
+      <Card dark={dark} glow="bg-yellow-500/5">
+        <SectionHeader icon={Trophy} title="Doctor Ranking — Top 3" color="amber" T={T}/>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {docs.slice(0,3).map((d,i)=>{const a=(d.revenue/d.target)*100;return(
+            <div key={i} className={`rounded-xl border p-4 ${dark?'bg-white/[0.03] border-white/5':'bg-black/[0.03] border-black/5'}`}>
+              <div className="flex items-center gap-2 mb-2">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${i===0?'bg-yellow-500/20 text-yellow-400':i===1?'bg-slate-400/20 text-slate-300':'bg-amber-700/20 text-amber-600'}`}>#{i+1}</div>
+                <div className="min-w-0"><p className={`text-xs font-semibold truncate ${T.text}`}>{d.name}</p></div>
+              </div>
+              <p className={`text-lg font-bold ${dark?'text-white':'text-slate-900'}`}>{fmtRpS(d.revenue)}</p>
+              <div className="mt-2"><ProgressBar pct={a} color={achColor(a)}/></div>
+              <p className={`text-[10px] mt-1 text-${achColor(a)}-400 font-semibold`}>{a.toFixed(0)}% dari target</p>
+            </div>
+          );})}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ── 2. Upload Data Excel dengan Auto-Mapping ────────────────────────────────
+function PageUploadExcelAdvanced({dark,T,db,setDB,addToast}){
+  const[file,setFile]=useState(null);
+  const[sheets,setSheets]=useState([]);
+  const[loading,setLoading]=useState(false);
+  const[step,setStep]=useState('idle');
+  const[selected,setSelected]=useState(0);
+  const[mappings,setMappings]=useState({});
+  const[reviewOpen,setReviewOpen]=useState(false);
+  const[reviewData,setReviewData]=useState([]);
+  const dbSchema={
+    'Revenue':['bulan','tahun','realisasi','target','partial'],
+    'Dokter':['name','target','revenue','consult','treatment','product'],
+    'Karyawan':['name','role','dept','status','kpi'],
+    'Inventory':['kode','nama','kategori','stok','min_stok','harga'],
+    'Treatment':['nama','kategori','total','qty','target_tahun'],
+  };
+
+  const parse=async f=>{
+    setLoading(true);
+    setFile(f.name);
+    const XLSX=await (window.XLSX||loadXLSX());
+    if(!XLSX){addToast('Gagal load SheetJS','error');setLoading(false);return;}
+    const reader=new FileReader();
+    reader.onload=e=>{
+      try{
+        const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+        const result=wb.SheetNames.map(name=>{
+          const ws=wb.Sheets[name];
+          const data=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+          return{name,headers:data[0]||[],rows:data.slice(1)};
+        });
+        setSheets(result);
+        autoMapColumns(result);
+        setStep('mapping');
+      }catch(err){addToast('Error: '+err.message,'error');}
+      setLoading(false);
+    };
+    reader.readAsArrayBuffer(f);
+  };
+
+  const autoMapColumns=sheets=>{
+    const newMappings={};
+    sheets.forEach((sheet,idx)=>{
+      const targetSchema=Object.entries(dbSchema).find(([key])=>key.toLowerCase()===sheet.name.toLowerCase())?.[1]||[];
+      const mapped={};
+      targetSchema.forEach(col=>{
+        const foundIdx=sheet.headers.findIndex(h=>h.toLowerCase().includes(col.toLowerCase())||col.toLowerCase().includes(h.toLowerCase()));
+        if(foundIdx>=0)mapped[col]=foundIdx;
+      });
+      newMappings[idx]=mapped;
+    });
+    setMappings(newMappings);
+  };
+
+  const handleReview=()=>{
+    const sh=sheets[selected];
+    const map=mappings[selected]||{};
+    const transformed=sh.rows.map(row=>{
+      const obj={};
+      Object.entries(map).forEach(([col,idx])=>{
+        obj[col]=row[idx]||'';
+      });
+      return obj;
+    }).filter(row=>Object.values(row).some(v=>v!==''));
+    setReviewData(transformed);
+    setReviewOpen(true);
+  };
+
+  const handleConfirmData=data=>{
+    const sh=sheets[selected];
+    const targetKey=Object.keys(dbSchema).find(k=>k.toLowerCase()===sh.name.toLowerCase());
+    if(!targetKey){addToast('Sheet name tidak match database schema','error');return;}
+    
+    setDB(prev=>{
+      const updated={...prev};
+      if(!updated[targetKey])updated[targetKey]=[];
+      updated[targetKey]=[...updated[targetKey],...data];
+      return updated;
+    });
+    addToast(`${data.length} baris ditambahkan ke ${targetKey}!`,'success');
+    setReviewOpen(false);
+  };
+
+  return(
+    <div className="fade-in space-y-5">
+      <Card dark={dark} glow="bg-emerald-500/5">
+        <SectionHeader icon={FileSpreadsheet} title="Upload Excel — Smart Mapping" color="emerald" T={T}/>
+        <label className={`flex flex-col items-center gap-3 border-2 border-dashed rounded-xl py-10 cursor-pointer transition-all ${dark?'border-white/15 hover:border-emerald-500/40':'border-black/15 hover:border-emerald-500/50'}`}>
+          <input type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>e.target.files?.[0]&&parse(e.target.files[0])}/>
+          {loading?<RefreshCw size={26} className="text-emerald-400 animate-spin"/>:<FileSpreadsheet size={26} className="text-emerald-400"/>}
+          <span className={`text-sm font-semibold ${T.text}`}>{file||'Pilih file Excel (.xlsx)'}</span>
+          <span className={`text-xs ${T.textFaint}`}>Support: Revenue, Dokter, Karyawan, Inventory, Treatment</span>
+        </label>
+      </Card>
+
+      {step==='mapping'&&sheets.length>0&&(
+        <Fragment>
+          <Card dark={dark}>
+            <SectionHeader icon={Database} title={`${sheets.length} Sheet Ditemukan`} T={T}/>
+            <div className="flex gap-2 flex-wrap mb-4">
+              {sheets.map((s,i)=>(
+                <button key={i} onClick={()=>setSelected(i)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${selected===i?'bg-emerald-500/20 border-emerald-500/40 text-emerald-400':(dark?'border-white/10 text-slate-400 hover:bg-white/5':'border-black/10 text-slate-500 hover:bg-black/5')}`}>
+                  {s.name} <span className={`ml-1 opacity-60`}>({s.rows.length})</span>
+                </button>
+              ))}
+            </div>
+            {sheets[selected]&&(
+              <div>
+                <p className={`text-xs font-bold ${T.textMuted} mb-3`}>Column Mapping untuk "{sheets[selected].name}":</p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-4">
+                  {Object.entries(dbSchema).find(([k])=>k.toLowerCase()===sheets[selected].name.toLowerCase())?.[1]?.map(col=>(
+                    <div key={col} className={`p-2 rounded border ${dark?'bg-white/5 border-white/10':'bg-black/5 border-black/10'}`}>
+                      <p className={`text-[10px] ${T.textFaint}`}>{col}</p>
+                      <select value={mappings[selected]?.[col]??-1} onChange={e=>setMappings(p=>({...p,[selected]:{...p[selected],[col]:Number(e.target.value)}}))} className={`w-full text-[10px] rounded border mt-1 ${T.inputBg} ${T.text}`}>
+                        <option value={-1}>— Tidak mapped —</option>
+                        {sheets[selected].headers.map((h,i)=><option key={i} value={i}>{h}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+                <div className="overflow-x-auto max-h-48 overflow-y-auto mb-4">
+                  <table className="w-full text-left text-xs">
+                    <thead><tr className={`border-b ${T.divider} ${T.textFaint} sticky top-0 ${T.tableTh}`}>
+                      {sheets[selected].headers.slice(0,8).map((h,i)=><th key={i} className="pb-2 px-2">{h}</th>)}
+                      {sheets[selected].headers.length>8&&<th className="pb-2 px-2">+{sheets[selected].headers.length-8}</th>}
+                    </tr></thead>
+                    <tbody>{sheets[selected].rows.slice(0,5).map((row,i)=>(
+                      <tr key={i} className={`border-b ${T.divider}`}>
+                        {row.slice(0,8).map((c,j)=><td key={j} className={`py-1.5 px-2 ${T.text}`}>{String(c).slice(0,30)}</td>)}
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+                <div className="flex gap-2">
+                  <Btn icon={Eye} onClick={handleReview} color="cyan" size="md">Preview & Review</Btn>
+                  <Btn icon={RefreshCw} onClick={()=>{setStep('idle');setSheets([]);setFile(null);}} variant="outline" size="md">Upload Lain</Btn>
+                </div>
+              </div>
+            )}
+          </Card>
+        </Fragment>
+      )}
+
+      <DataReviewModal open={reviewOpen} onClose={()=>setReviewOpen(false)} data={reviewData} onConfirm={handleConfirmData} dark={dark} T={T} title="Review Data Sebelum Import"/>
+    </div>
+  );
+}
+
+// ── 3. Performance dengan Filter Bulan/Tahun ────────────────────────────────
+function PagePerformanceFiltered({period,dark,T,db,addToast}){
+  const rev=db.revenue;
+  const[month,setMonth]=useState(rev[rev.length-1].bulan);
+  const[year,setYear]=useState(rev[rev.length-1].tahun);
+  
+  const filtered=rev.filter(r=>r.tahun===year&&r.bulan===month)[0]||rev[rev.length-1];
+  const achv=(filtered.realisasi/filtered.target)*100;
+
+  const months=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+  const years=[2024,2025,2026];
+
+  return(
+    <div className="fade-in space-y-5">
+      <div className="flex gap-2 mb-4">
+        <select value={month} onChange={e=>setMonth(e.target.value)} className={`px-3 py-2 text-sm rounded border font-semibold ${T.inputBg} ${T.text}`}>
+          {months.map(m=><option key={m} value={m}>{m}</option>)}
+        </select>
+        <select value={year} onChange={e=>setYear(Number(e.target.value))} className={`px-3 py-2 text-sm rounded border font-semibold ${T.inputBg} ${T.text}`}>
+          {years.map(y=><option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <Card dark={dark}><p className={`text-[10px] uppercase ${T.textFaint}`}>Target</p><p className={`text-2xl font-bold ${T.text}`}>{fmtRpS(filtered.target)}</p></Card>
+        <Card dark={dark}><p className={`text-[10px] uppercase ${T.textFaint}`}>Realisasi</p><p className={`text-2xl font-bold text-${achColor(achv)}-400`}>{fmtRpS(filtered.realisasi)}</p></Card>
+        <Card dark={dark}><p className={`text-[10px] uppercase ${T.textFaint}`}>Achievement</p><p className={`text-2xl font-bold text-${achColor(achv)}-400`}>{achv.toFixed(1)}%</p></Card>
+      </div>
+
+      <Card dark={dark}>
+        <SectionHeader icon={BarChart2} title="Doctor Performance" color="cyan" T={T}/>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead><tr className={`border-b text-[10px] uppercase ${T.divider} ${T.textFaint} ${T.tableTh}`}>
+              <th className="pb-2 px-2">Dokter</th>
+              <th className="pb-2 px-2 text-right">Revenue</th>
+              <th className="pb-2 px-2 text-right">Target</th>
+              <th className="pb-2 px-2 text-right">Achv</th>
+              <th className="pb-2 px-2 text-right">Konsultasi</th>
+            </tr></thead>
+            <tbody>{[...db.doctors].sort((a,b)=>b.revenue-a.revenue).map((d,i)=>{
+              const a=(d.revenue/d.target)*100;
+              return(
+                <tr key={i} className={`border-b ${T.divider} ${T.rowHover}`}>
+                  <td className={`py-2 px-2 font-medium ${T.text}`}>{d.name}</td>
+                  <td className={`py-2 px-2 text-right font-mono ${T.text}`}>{fmtRpS(d.revenue)}</td>
+                  <td className={`py-2 px-2 text-right font-mono ${T.textMuted}`}>{fmtRpS(d.target)}</td>
+                  <td className={`py-2 px-2 text-right font-bold text-${achColor(a)}-400`}>{a.toFixed(0)}%</td>
+                  <td className={`py-2 px-2 text-right ${T.text}`}>{d.consult}</td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ── 4. Error Recovery & Data Forward ────────────────────────────────────────
+function PageErrorRecovery({dark,T,db,setDB,addToast}){
+  const[showLog,setShowLog]=useState(false);
+  const[errors,setErrors]=useState([
+    {id:1,time:new Date(Date.now()-3600000).toISOString(),table:'Revenue',error:'Invalid format in row 5: realisasi must be number',severity:'error',status:'unresolved'},
+    {id:2,time:new Date(Date.now()-1800000).toISOString(),table:'Dokter',error:'Duplicate entry detected for dr. Amelia Putri',severity:'warning',status:'auto-fixed'},
+    {id:3,time:new Date(Date.now()-900000).toISOString(),table:'Inventory',error:'Missing column: min_stok in row 3',severity:'error',status:'unresolved'},
+  ]);
+
+  const forwardData=()=>{
+    addToast('Data forwarded to backup storage & recovery queue','success');
+    const backup={timestamp:new Date().toISOString(),data:db,status:'backed_up'};
+    localStorage.setItem('mbg_backup_'+Date.now(),JSON.stringify(backup));
+  };
+
+  const resolveError=id=>{
+    setErrors(p=>p.map(e=>e.id===id?{...e,status:'resolved'}:e));
+    addToast('Error ditandai sebagai resolved','success');
+  };
+
+  const retrySync=async()=>{
+    addToast('Syncing dengan Google Sheets...','info');
+    await new Promise(resolve=>setTimeout(resolve,2000));
+    addToast('Sync completed successfully!','success');
+  };
+
+  return(
+    <div className="fade-in space-y-5">
+      {/* Quick Actions */}
+      <Card dark={dark} glow="bg-blue-500/5">
+        <SectionHeader icon={ShieldCheck} title="Data Recovery & Error Management" color="blue" T={T}/>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className={`p-4 rounded-xl border ${dark?'bg-white/[0.02] border-white/5':'bg-black/[0.02] border-black/5'}`}>
+            <p className={`text-2xl font-bold text-emerald-400`}>{errors.filter(e=>e.status==='resolved').length}</p>
+            <p className={`text-xs ${T.textMuted}`}>Resolved Errors</p>
+          </div>
+          <div className={`p-4 rounded-xl border ${dark?'bg-white/[0.02] border-white/5':'bg-black/[0.02] border-black/5'}`}>
+            <p className={`text-2xl font-bold text-rose-400`}>{errors.filter(e=>e.status==='unresolved').length}</p>
+            <p className={`text-xs ${T.textMuted}`}>Unresolved Errors</p>
+          </div>
+          <div className={`p-4 rounded-xl border ${dark?'bg-white/[0.02] border-white/5':'bg-black/[0.02] border-black/5'}`}>
+            <p className={`text-2xl font-bold text-blue-400`}>{db.meta?.lastSync?'✓ Synced':'⚠ Pending'}</p>
+            <p className={`text-xs ${T.textMuted}`}>Sync Status</p>
+          </div>
+        </div>
+        <div className="flex gap-2 mt-4">
+          <Btn icon={GitBranch} onClick={forwardData} color="emerald" size="md">Forward Data</Btn>
+          <Btn icon={RefreshCw} onClick={retrySync} color="cyan" size="md">Retry Sync</Btn>
+          <Btn icon={AlertCircle} onClick={()=>setShowLog(!showLog)} variant="outline" size="md">View Error Log</Btn>
+        </div>
+      </Card>
+
+      {/* Error Log */}
+      {showLog&&(
+        <Card dark={dark}>
+          <SectionHeader icon={AlertTriangle} title="Error Log & History" color="rose" T={T}/>
+          <div className="space-y-2">
+            {errors.map(e=>(
+              <div key={e.id} className={`p-3 rounded-lg border ${e.status==='resolved'?(dark?'bg-emerald-500/5 border-emerald-500/20':'bg-emerald-50 border-emerald-200'):(dark?'bg-rose-500/5 border-rose-500/20':'bg-rose-50 border-rose-200')}`}>
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <p className={`text-xs font-bold ${e.status==='resolved'?'text-emerald-400':'text-rose-400'}`}>{e.table} — {e.severity.toUpperCase()}</p>
+                    <p className={`text-xs mt-1 ${T.textMuted}`}>{e.error}</p>
+                    <p className={`text-[10px] mt-1 ${T.textFaint}`}>{fmtDate(e.time)}</p>
+                  </div>
+                  {e.status==='unresolved'&&<Btn icon={CheckCircle} onClick={()=>resolveError(e.id)} variant="ghost" color="emerald" size="sm">Mark OK</Btn>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Data Backup Info */}
+      <Card dark={dark}>
+        <SectionHeader icon={Download} title="Backup & Recovery Information" T={T}/>
+        <div className={`p-3 rounded-lg ${dark?'bg-white/[0.02] border-white/5':'bg-black/[0.02] border-black/5'} border text-xs space-y-2`}>
+          <p><span className={T.textFaint}>Last Backup:</span> <span className={T.text}>{fmtDate(db.meta?.lastUpdate)}</span></p>
+          <p><span className={T.textFaint}>Sync Status:</span> <Badge label={db.meta?.syncStatus||'pending'} color={db.meta?.syncStatus==='synced'?'emerald':'amber'}/></p>
+          <p><span className={T.textFaint}>Records:</span> <span className={T.text}>{db.revenue.length} Revenue · {db.doctors.length} Dokter · {db.inventory.length} Inventory</span></p>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ── SIDEBAR ─────────────────────────────────────────────────────────────────
+const SIDEBAR=[
+  {key:'dashboard',label:'DASHBOARD',icon:LayoutDashboard,items:['Dashboard']},
+  {key:'datainput',label:'DATA INPUT',icon:Database,items:['Upload Excel','Data Review','Error Recovery']},
+  {key:'performance',label:'PERFORMANCE',icon:BarChart2,items:['Performance Monitor','Doctor Rankings','Treatment Analysis']},
+  {key:'employee',label:'EMPLOYEE',icon:Users,items:['Employee Directory','Doctor Management']},
+  {key:'revenue',label:'REVENUE',icon:Wallet,items:['Treatment Revenue','Product Revenue']},
+  {key:'inventory',label:'INVENTORY',icon:Boxes,items:['Product Stock','Medicine Stock']},
+  {key:'analytics',label:'ANALYTICS',icon:LineChart,items:['AI Insights','Conversion Funnel']},
+  {key:'report',label:'REPORT',icon:FileText,items:['Export Center','Download Excel']},
+  {key:'settings',label:'SETTINGS',icon:Settings,items:['User Management','Notifications']},
+];
+
+// ════════════════════════════════════════════════════════════════════════════
+// APP ROOT
+// ════════════════════════════════════════════════════════════════════════════
+function App(){
+  const[dark,setDark]=useState(true);
+  const[active,setActive]=useState('Dashboard');
+  const[search,setSearch]=useState('');
+  const[collapsed,setCollapsed]=useState({});
+  const{db,setDB,syncing,syncWithSheet}=useOnlineDB();
+  const{toasts,add:addToast,remove:removeToast}=useToast();
+  const T=useTheme(dark);
+
+  const toggle=(key)=>setCollapsed(p=>({...p,[key]:!p[key]}));
+  const nav=(item)=>{setActive(item);setSearch('');};
+
+  const filteredSections=useMemo(()=>{
+    if(!search.trim())return SIDEBAR;
+    const q=search.toLowerCase();
+    return SIDEBAR.map(s=>({...s,items:s.items.filter(i=>i.toLowerCase().includes(q))})).filter(s=>s.label.toLowerCase().includes(q)||s.items.length>0);
+  },[search]);
+
+  const unreadCount=(db.notifications||[]).filter(n=>!n.read).length;
+
+  const renderPage=()=>{
+    switch(active){
+      case'Dashboard':return<PageDashboard dark={dark} T={T} db={db} addToast={addToast}/>;
+      case'Upload Excel':return<PageUploadExcelAdvanced dark={dark} T={T} db={db} setDB={setDB} addToast={addToast}/>;
+      case'Error Recovery':return<PageErrorRecovery dark={dark} T={T} db={db} setDB={setDB} addToast={addToast}/>;
+      case'Performance Monitor':return<PagePerformanceFiltered period="Monthly" dark={dark} T={T} db={db} addToast={addToast}/>;
+      case'Doctor Rankings':return<PagePerformanceFiltered period="Doctor" dark={dark} T={T} db={db} addToast={addToast}/>;
+      default:return<PageDashboard dark={dark} T={T} db={db} addToast={addToast}/>;
+    }
+  };
+
+  return(
+    <div className="flex h-screen font-sans overflow-hidden" style={{background:T.bg}}>
+      {dark&&(
+        <div className="fixed inset-0 pointer-events-none">
+          <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-cyan-600/8 rounded-full blur-[120px]"/>
+          <div className="absolute bottom-0 right-1/4 w-[400px] h-[400px] bg-emerald-600/8 rounded-full blur-[100px]"/>
+        </div>
+      )}
+
+      {/* SIDEBAR */}
+      <aside className={`relative w-64 h-full ${T.sidebarBg} backdrop-blur-2xl border-r ${T.panelBorder} flex flex-col z-20`}>
+        <div className={`h-14 flex items-center px-4 gap-3 border-b ${T.divider} shrink-0`}>
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-600 flex items-center justify-center shadow-[0_0_12px_rgba(16,185,129,0.35)] shrink-0">
+            <span className="font-bold text-white text-[10px]">MBG</span>
+          </div>
+          <div>
+            <div className={`font-bold text-sm ${T.text}`}>Monitoring <span className="text-emerald-400">Bening</span></div>
+            <div className={`text-[9px] ${T.textFaint}`}>Online · v4.0</div>
+          </div>
+        </div>
+
+        <div className="px-3 pt-2 pb-1 shrink-0">
+          <div className="relative">
+            <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${T.textFaint}`} size={12}/>
+            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Cari menu..."
+              className={`w-full rounded-lg py-1.5 pl-8 pr-3 text-xs border outline-none focus:border-emerald-500/50 ${T.inputBg} ${T.text}`}/>
+          </div>
+        </div>
+
+        {/* Pinned */}
+        {!search&&(
+          <div className="px-3 py-1 shrink-0 space-y-0.5">
+            {[{l:'Dashboard',i:LayoutDashboard},{l:'Notifikasi',i:BellRing,badge:unreadCount}].map(({l,i:Icon,badge})=>(
+              <button key={l} onClick={()=>nav(l)} className={`w-full flex items-center justify-between px-3 py-2 rounded-xl transition-all ${active===l?'bg-gradient-to-r from-emerald-500/20 to-cyan-500/10 border border-emerald-500/30 text-emerald-400':`${T.hoverBg} ${T.textMuted} border border-transparent`}`}>
+                <div className="flex items-center gap-2.5"><Icon size={14}/><span className="text-xs font-semibold">{l}</span></div>
+                {badge>0&&<span className="text-[9px] font-bold bg-rose-500 text-white rounded-full w-4 h-4 flex items-center justify-center">{badge}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-0.5">
+          {filteredSections.map(sec=>{
+            const col=collapsed[sec.key];
+            return(
+              <div key={sec.key}>
+                <button onClick={()=>toggle(sec.key)} className={`w-full flex items-center justify-between px-2 py-1.5 mt-1.5 rounded-lg ${T.hoverBg} transition-colors`}>
+                  <span className={`text-[9px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${T.textFaint}`}>
+                    <sec.icon size={10}/>{sec.label}
+                  </span>
+                  {col?<ChevronRight size={10} className={T.textFaint}/>:<ChevronUp size={10} className={T.textFaint}/>}
+                </button>
+                {!col&&(
+                  <ul className="space-y-0.5">
+                    {sec.items.map(item=>(
+                      <li key={item}>
+                        <button onClick={()=>nav(item)} className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg transition-all group ${active===item?(dark?'text-white bg-white/5 border-l-2 border-emerald-400':'text-slate-900 bg-black/5 border-l-2 border-emerald-500'):`${T.textMuted} ${T.hoverBg}`}`}>
+                          <span className="text-xs font-medium truncate">{item}</span>
+                          <ChevronRight size={10} className="opacity-0 group-hover:opacity-40 shrink-0"/>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Status */}
+        <div className={`px-3 py-2 border-t ${T.divider} shrink-0`}>
+          <div className={`flex items-center gap-2 text-[9px] ${T.textFaint}`}>
+            <div className={`w-1.5 h-1.5 rounded-full ${syncing?'bg-amber-400 animate-pulse':'bg-emerald-400 animate-pulse'}`}/>
+            <span>{syncing?'Syncing...':'Online'}</span>
+          </div>
+        </div>
+      </aside>
+
+      {/* MAIN */}
+      <main className="flex-1 flex flex-col min-w-0 z-10">
+        <header className={`h-12 border-b ${T.divider} px-5 flex items-center justify-between shrink-0 ${T.headerBg} backdrop-blur-md gap-3`}>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className={`text-[10px] ${T.textFaint}`}>MBG ONLINE</span>
+            <ChevronRight size={10} className={T.textFaint}/>
+            <span className={`text-xs font-semibold ${T.text} truncate`}>{active}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={syncWithSheet} disabled={syncing} className={`text-sm font-medium px-2 py-1 rounded border transition-all ${syncing?(dark?'border-amber-500/30 text-amber-400':'border-amber-300 text-amber-600'):(dark?'border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10':'border-emerald-300 text-emerald-600 hover:bg-emerald-50')}`}>
+              {syncing?<RefreshCw size={14} className="inline animate-spin mr-1"/>:'✓ Synced'}
+            </button>
+            <button onClick={()=>setDark(d=>!d)} className={`${T.textMuted} hover:text-amber-400`}>
+              {dark?<Moon size={17}/>:<Sun size={17}/>}
+            </button>
+            <div className={`h-5 w-px ${dark?'bg-white/10':'bg-black/10'}`}/>
+            <div className="flex items-center gap-1.5">
+              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center text-[9px] font-bold text-white">M</div>
+              <span className={`text-xs font-medium ${T.text} hidden sm:block`}>MBG Gresik</span>
+            </div>
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          {renderPage()}
+        </div>
+      </main>
+
+      <Toast toasts={toasts} remove={removeToast}/>
+    </div>
+  );
+}
+
+createRoot(document.getElementById('root')).render(<App/>);
+
+// Load SheetJS library if needed
+const loadXLSX=()=>new Promise(res=>{
+  if(window.XLSX){res(window.XLSX);return;}
+  const s=document.createElement('script');
+  s.src='https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+  s.onload=()=>res(window.XLSX);
+  s.onerror=()=>res(null);
+  document.head.appendChild(s);
+});
+</script>
+</body>
+</html>
